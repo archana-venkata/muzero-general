@@ -1,7 +1,7 @@
 import datetime
 import pathlib
 
-import gym
+import gymnasium as gym
 import numpy
 import torch
 
@@ -141,7 +141,7 @@ class Game(AbstractGame):
     def __init__(self, seed=None):
         self.env = gym.make("Breakout-v4")
         if seed is not None:
-            self.env.seed(seed)
+            self.env.reset(seed=seed, options={})
 
     def step(self, action):
         """
@@ -153,8 +153,11 @@ class Game(AbstractGame):
         Returns:
             The new observation, the reward and a boolean if the game has ended.
         """
-        observation, reward, done, _ = self.env.step(action)
-        observation = cv2.resize(observation, (96, 96), interpolation=cv2.INTER_AREA)
+        observation, reward, terminated, truncated, info = self.env.step(
+            action)
+        done = terminated or truncated
+        observation = cv2.resize(
+            observation, (96, 96), interpolation=cv2.INTER_AREA)
         observation = numpy.asarray(observation, dtype="float32") / 255.0
         observation = numpy.moveaxis(observation, -1, 0)
         return observation, reward, done
@@ -180,7 +183,8 @@ class Game(AbstractGame):
             Initial observation of the game.
         """
         observation = self.env.reset()
-        observation = cv2.resize(observation, (96, 96), interpolation=cv2.INTER_AREA)
+        observation = cv2.resize(
+            observation, (96, 96), interpolation=cv2.INTER_AREA)
         observation = numpy.asarray(observation, dtype="float32") / 255.0
         observation = numpy.moveaxis(observation, -1, 0)
         return observation

@@ -9,6 +9,7 @@ import time
 
 import nevergrad
 import numpy
+import pandas as pd
 import ray
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -45,6 +46,7 @@ class MuZero:
             game_module = importlib.import_module("games." + game_name)
             self.Game = game_module.Game
             self.config = game_module.MuZeroConfig()
+
         except ModuleNotFoundError as err:
             print(
                 f'{game_name} is not a supported game name, try "cartpole" or refer to the documentation for adding a new game.'
@@ -63,6 +65,28 @@ class MuZero:
                         )
             else:
                 self.config = config
+
+        ##########################################################################
+        ################ LOAD STRATEGIES FOR THE GAME ENVIRONMENT ################
+
+        if self.config.use_strategies:
+
+            # read json file with transferred strategies
+            strategies_df = pd.read_json('strategies.json')
+            if game_name == "pacman":
+                env_name = "SimplePacman-v0"
+
+            env_strategies = strategies_df[env_name].to_dict()
+
+            self.config.strategies = env_strategies['strategies']
+
+        else:
+            self.config.strategies = []
+
+            # self.Game.set_strategies(env_strategies['strategies'])
+
+        ##########################################################################
+        ##########################################################################
 
         # Fix random generator seed
         numpy.random.seed(self.config.seed)
@@ -93,7 +117,8 @@ class MuZero:
         if 1 < self.num_gpus:
             self.num_gpus = math.floor(self.num_gpus)
 
-        ray.init(num_gpus=total_gpus, ignore_reinit_error=True)
+        # ray.init(num_gpus=total_gpus, ignore_reinit_error=True)
+        ray.init()
 
         # Checkpoint and replay buffer used to initialize workers
         self.checkpoint = {
@@ -119,7 +144,8 @@ class MuZero:
 
         cpu_actor = CPUActor.remote()
         cpu_weights = cpu_actor.get_initial_weights.remote(self.config)
-        self.checkpoint["weights"], self.summary = copy.deepcopy(ray.get(cpu_weights))
+        self.checkpoint["weights"], self.summary = copy.deepcopy(
+            ray.get(cpu_weights))
 
         # Workers
         self.self_play_workers = None
@@ -211,6 +237,7 @@ class MuZero:
         """
         Keep track of the training performance.
         """
+
         # Launch the test worker to get performance metrics
         self.test_worker = self_play.SelfPlay.options(
             num_cpus=0,
@@ -264,9 +291,11 @@ class MuZero:
             "num_reanalysed_games",
         ]
         info = ray.get(self.shared_storage_worker.get_info.remote(keys))
+
         try:
             while info["training_step"] < self.config.training_steps:
-                info = ray.get(self.shared_storage_worker.get_info.remote(keys))
+                info = ray.get(
+                    self.shared_storage_worker.get_info.remote(keys))
                 writer.add_scalar(
                     "1.Total_reward/1.Total_reward",
                     info["total_reward"],
@@ -313,13 +342,17 @@ class MuZero:
                     info["training_step"] / max(1, info["num_played_steps"]),
                     counter,
                 )
-                writer.add_scalar("2.Workers/6.Learning_rate", info["lr"], counter)
+                writer.add_scalar("2.Workers/6.Learning_rate",
+                                  info["lr"], counter)
                 writer.add_scalar(
                     "3.Loss/1.Total_weighted_loss", info["total_loss"], counter
                 )
-                writer.add_scalar("3.Loss/Value_loss", info["value_loss"], counter)
-                writer.add_scalar("3.Loss/Reward_loss", info["reward_loss"], counter)
-                writer.add_scalar("3.Loss/Policy_loss", info["policy_loss"], counter)
+                writer.add_scalar("3.Loss/Value_loss",
+                                  info["value_loss"], counter)
+                writer.add_scalar("3.Loss/Reward_loss",
+                                  info["reward_loss"], counter)
+                writer.add_scalar("3.Loss/Policy_loss",
+                                  info["policy_loss"], counter)
                 print(
                     f'Last test reward: {info["total_reward"]:.2f}. Training step: {info["training_step"]}/{self.config.training_steps}. Played games: {info["num_played_games"]}. Loss: {info["total_loss"]:.2f}',
                     end="\r",
@@ -355,7 +388,8 @@ class MuZero:
                 self.shared_storage_worker.get_checkpoint.remote()
             )
         if self.replay_buffer_worker:
-            self.replay_buffer = ray.get(self.replay_buffer_worker.get_buffer.remote())
+            self.replay_buffer = ray.get(
+                self.replay_buffer_worker.get_buffer.remote())
 
         print("\nShutting down workers...")
 
@@ -409,7 +443,8 @@ class MuZero:
         self_play_worker.close_game.remote()
 
         if len(self.config.players) == 1:
-            result = numpy.mean([sum(history.reward_history) for history in results])
+            result = numpy.mean([sum(history.reward_history)
+                                for history in results])
         else:
             result = numpy.mean(
                 [
@@ -471,7 +506,7 @@ class MuZero:
         Args:
             horizon (int): Number of timesteps for which we collect information.
         """
-        game = self.Game(self.config.seed)
+        game = self.Game(self.config.seed, self.config.strategies)
         obs = game.reset()
         dm = diagnose_model.DiagnoseModel(self.checkpoint, self.config)
         dm.compare_virtual_with_real_trajectories(obs, game, horizon)
@@ -531,7 +566,8 @@ def hyperparameter_search(
         while 0 < budget or any(running_experiments):
             for i, experiment in enumerate(running_experiments):
                 if experiment and experiment.config.training_steps <= ray.get(
-                    experiment.shared_storage_worker.get_info.remote("training_step")
+                    experiment.shared_storage_worker.get_info.remote(
+                        "training_step")
                 ):
                     experiment.terminate_workers()
                     result = experiment.test(False, num_tests=num_tests)
@@ -548,7 +584,8 @@ def hyperparameter_search(
                     if 0 < budget:
                         param = optimizer.ask()
                         print(f"Launching new experiment: {param.value}")
-                        muzero = MuZero(game_name, param.value, parallel_experiments)
+                        muzero = MuZero(game_name, param.value,
+                                        parallel_experiments)
                         muzero.param = param
                         muzero.train(False)
                         running_experiments[i] = muzero
@@ -608,7 +645,8 @@ def load_model_menu(muzero, game_name):
             "Enter a path to the replay_buffer.pkl, or ENTER if none: "
         )
         while replay_buffer_path and not pathlib.Path(replay_buffer_path).is_file():
-            replay_buffer_path = input("Invalid replay buffer path. Try again: ")
+            replay_buffer_path = input(
+                "Invalid replay buffer path. Try again: ")
     else:
         checkpoint_path = options[choice] / "model.checkpoint"
         replay_buffer_path = options[choice] / "replay_buffer.pkl"
@@ -688,8 +726,9 @@ if __name__ == "__main__":
                 done = False
                 while not done:
                     action = env.human_to_action()
-                    observation, reward, done = env.step(action)
-                    print(f"\nAction: {env.action_to_string(action)}\nReward: {reward}")
+                    observation, reward, old_reward, done = env.step(action)
+                    print(
+                        f"\nAction: {env.action_to_string(action)}\nReward: {reward}")
                     env.render()
             elif choice == 6:
                 # Define here the parameters to tune
@@ -700,7 +739,8 @@ if __name__ == "__main__":
                 parallel_experiments = 2
                 lr_init = nevergrad.p.Log(lower=0.0001, upper=0.1)
                 discount = nevergrad.p.Log(lower=0.95, upper=0.9999)
-                parametrization = nevergrad.p.Dict(lr_init=lr_init, discount=discount)
+                parametrization = nevergrad.p.Dict(
+                    lr_init=lr_init, discount=discount)
                 best_hyperparameters = hyperparameter_search(
                     game_name, parametrization, budget, parallel_experiments, 20
                 )

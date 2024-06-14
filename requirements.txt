@@ -1,4 +1,4 @@
-gym[classic_control]
+gymnasium[classic_control]
 nevergrad
 numpy
 ray

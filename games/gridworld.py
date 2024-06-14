@@ -1,7 +1,7 @@
 import datetime
 import pathlib
 
-import gym
+import gymnasium as gym
 import numpy
 import torch
 
@@ -56,7 +56,7 @@ class MuZeroConfig:
         ### Network
         self.network = "fullyconnected"  # "resnet" / "fullyconnected"
         self.support_size = 10  # Value and reward are scaled (with almost sqrt) and encoded on a vector with a range of -support_size to support_size. Choose it so that support_size <= sqrt(max(abs(discounted reward)))
-        
+
         # Residual Network
         self.downsample = False  # Downsample observations before representation network, False / "CNN" (lighter) / "resnet" (See paper appendix Network Architecture)
         self.blocks = 1  # Number of blocks in the ResNet
@@ -142,7 +142,7 @@ class Game(AbstractGame):
         self.env = gym.make("MiniGrid-Empty-Random-6x6-v0")
         self.env = gym_minigrid.wrappers.ImgObsWrapper(self.env)
         if seed is not None:
-            self.env.seed(seed)
+            self.env.reset(seed=seed, options={})
 
     def step(self, action):
         """
@@ -154,7 +154,9 @@ class Game(AbstractGame):
         Returns:
             The new observation, the reward and a boolean if the game has ended.
         """
-        observation, reward, done, _ = self.env.step(action)
+        observation, reward, terminated, truncated, info = self.env.step(
+            action)
+        done = terminated or truncated
         return numpy.array(observation), reward, done
 
     def legal_actions(self):

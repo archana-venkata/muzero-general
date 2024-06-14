@@ -56,8 +56,10 @@ class DiagnoseModel:
                 root.hidden_state,
                 torch.tensor([[action]]).to(root.hidden_state.device),
             )
-            value = models.support_to_scalar(value, self.config.support_size).item()
-            reward = models.support_to_scalar(reward, self.config.support_size).item()
+            value = models.support_to_scalar(
+                value, self.config.support_size).item()
+            reward = models.support_to_scalar(
+                reward, self.config.support_size).item()
             root = Node(0)
             root.expand(
                 self.config.action_space,
@@ -115,7 +117,7 @@ class DiagnoseModel:
                     trajectory_divergence_index = i
                     real_trajectory_end_reason = f"Virtual trajectory reached an illegal move at timestep {trajectory_divergence_index}."
 
-            observation, reward, done = game.step(action)
+            observation, reward, old_reward, done = game.step(action)
             root, mcts_info = MCTS(self.config).run(
                 self.model,
                 observation,
@@ -206,7 +208,8 @@ class Trajectoryinfo:
         self.policies_after_planning = []
         # Not implemented, need to store them in every nodes of the mcts
         self.prior_values = []
-        self.values_after_planning = [[numpy.NaN] * len(self.config.action_space)]
+        self.values_after_planning = [
+            [numpy.NaN] * len(self.config.action_space)]
         self.prior_root_value = []
         self.root_value_after_planning = []
         self.prior_rewards = [[numpy.NaN] * len(self.config.action_space)]
@@ -324,7 +327,8 @@ class Trajectoryinfo:
         # ax = seaborn.lineplot(x=list(range(len(self.root_value_after_planning))), y=self.root_value_after_planning)
         ax = seaborn.heatmap(
             numpy.transpose([self.root_value_after_planning]),
-            mask=numpy.isnan(numpy.transpose([self.root_value_after_planning])),
+            mask=numpy.isnan(numpy.transpose(
+                [self.root_value_after_planning])),
             xticklabels=False,
             annot=True,
         )

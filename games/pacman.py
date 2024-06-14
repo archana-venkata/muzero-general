@@ -3,9 +3,32 @@ import pathlib
 
 import gymnasium as gym
 import numpy
+import pandas as pd
 import torch
 
 from .abstract_game import AbstractGame
+
+import gym_envs
+import ray
+
+
+def is_subsequence(a, b):
+    b_it = iter(b)
+    count = 0
+    try:
+        for a_val in a:
+            if a_val in b:
+                count += 1
+                while str(next(b_it)) != str(a_val):
+                    pass
+
+    except StopIteration:
+        return False, 0
+
+    if count == 0:
+        return False, 0
+    else:
+        return True, count/len(a)
 
 
 class MuZeroConfig:
@@ -13,14 +36,15 @@ class MuZeroConfig:
         # fmt: off
         # More information is available here: https://github.com/werner-duvaud/muzero-general/wiki/Hyperparameter-Optimization
 
-        self.seed = 0  # Seed for numpy, torch and the game
+        self.env_name = "SimplePacman-v0"
+        self.seed = 100  # Seed for numpy, torch and the game
         self.max_num_gpus = None  # Fix the maximum number of GPUs to use. It's usually faster to use a single GPU (set it to 1) if it has enough memory. None will use every GPUs available
 
 
 
         ### Game
-        self.observation_shape = (1, 1, 4)  # Dimensions of the game observation, must be 3D (channel, height, width). For a 1D array, please reshape it to (1, 1, length of array)
-        self.action_space = list(range(2))  # Fixed list of all possible actions. You should only edit the length
+        self.observation_shape = (1, 15, 21)  # Dimensions of the game observation, must be 3D (channel, height, width). For a 1D array, please reshape it to (1, 1, length of array)
+        self.action_space = list(range(4))  # Fixed list of all possible actions. You should only edit the length
         self.players = list(range(1))  # List of players. You should only edit the length
         self.stacked_observations = 0  # Number of previous observations and previous actions to add to the current observation
 
@@ -31,12 +55,14 @@ class MuZeroConfig:
 
 
         ### Self-Play
-        self.num_workers = 1  # Number of simultaneous threads/workers self-playing to feed the replay buffer
+        self.num_workers = 4  # Number of simultaneous threads/workers self-playing to feed the replay buffer
         self.selfplay_on_gpu = False
-        self.max_moves = 500  # Maximum number of moves if game is not finished before
-        self.num_simulations = 50  # Number of future moves self-simulated
+        self.max_moves = 200  # Maximum number of moves if game is not finished before
+        self.num_simulations = 20  # Number of future moves self-simulated
         self.discount = 0.997  # Chronological discount of the reward
         self.temperature_threshold = None  # Number of moves before dropping the temperature given by visit_softmax_temperature_fn to 0 (ie selecting the best action). If None, visit_softmax_temperature_fn is used every time
+        self.use_strategies = True
+        self.strategies = None
 
         # Root prior exploration noise
         self.root_dirichlet_alpha = 0.25
@@ -76,7 +102,7 @@ class MuZeroConfig:
         ### Training
         self.results_path = pathlib.Path(__file__).resolve().parents[1] / "results" / pathlib.Path(__file__).stem / datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S")  # Path to store the model weights and TensorBoard logs
         self.save_model = True  # Save the checkpoint in results_path as model.checkpoint
-        self.training_steps = 10000  # Total number of training steps (ie weights update according to a batch)
+        self.training_steps = 30000  # Total number of training steps (ie weights update according to a batch)
         self.batch_size = 128  # Number of parts of games to train on at each training step
         self.checkpoint_interval = 10  # Number of training steps before using the model for self-playing
         self.value_loss_weight = 1  # Scale the value loss to avoid overfitting of the value function, paper recommends 0.25 (See paper appendix Reanalyze)
@@ -87,21 +113,21 @@ class MuZeroConfig:
         self.momentum = 0.9  # Used only if optimizer is SGD
 
         # Exponential learning rate schedule
-        self.lr_init = 0.02  # Initial learning rate
-        self.lr_decay_rate = 0.8  # Set it to 1 to use a constant learning rate
+        self.lr_init = 0.005  # Initial learning rate
+        self.lr_decay_rate = 1  # Set it to 1 to use a constant learning rate
         self.lr_decay_steps = 1000
 
 
 
         ### Replay Buffer
-        self.replay_buffer_size = 500  # Number of self-play games to keep in the replay buffer
+        self.replay_buffer_size = 5000  # Number of self-play games to keep in the replay buffer
         self.num_unroll_steps = 10  # Number of game moves to keep for every batch element
-        self.td_steps = 50  # Number of steps in the future to take into account for calculating the target value
-        self.PER = True  # Prioritized Replay (See paper appendix Training), select in priority the elements in the replay buffer which are unexpected for the network
+        self.td_steps = 20  # Number of steps in the future to take into account for calculating the target value
+        self.PER = False  # Prioritized Replay (See paper appendix Training), select in priority the elements in the replay buffer which are unexpected for the network
         self.PER_alpha = 0.5  # How much prioritization is used, 0 corresponding to the uniform case, paper suggests 1
 
         # Reanalyze (See paper appendix Reanalyse)
-        self.use_last_model_value = True  # Use the last model to provide a fresher, stable n-step value (See paper appendix Reanalyze)
+        self.use_last_model_value = False  # Use the last model to provide a fresher, stable n-step value (See paper appendix Reanalyze)
         self.reanalyse_on_gpu = False
 
 
@@ -109,7 +135,7 @@ class MuZeroConfig:
         ### Adjust the self play / training ratio to avoid over/underfitting
         self.self_play_delay = 0  # Number of seconds to wait after each played game
         self.training_delay = 0  # Number of seconds to wait after each training step
-        self.ratio = 1.5  # Desired training steps per self played step ratio. Equivalent to a synchronous version, training can take much longer. Set it to None to disable it
+        self.ratio = None  # Desired training steps per self played step ratio. Equivalent to a synchronous version, training can take much longer. Set it to None to disable it
         # fmt: on
 
     def visit_softmax_temperature_fn(self, trained_steps):
@@ -133,8 +159,17 @@ class Game(AbstractGame):
     Game wrapper.
     """
 
-    def __init__(self, seed=None):
-        self.env = gym.make("CartPole-v1")
+    def __init__(self, seed=None, strategies=[]):
+        self.env_name = "SimplePacman-v0"
+        self.action_history = []
+        self.decay_n = None
+        self.decay = True
+        self.decay_param = 0.95
+        self.strategies = strategies
+        self.seed = seed
+
+        self.env = gym.make(self.env_name, map_file="map.txt",
+                            config_file="config_train.json")
         if seed is not None:
             self.env.reset(seed=seed, options={})
 
@@ -151,7 +186,52 @@ class Game(AbstractGame):
         observation, reward, terminated, truncated, info = self.env.step(
             action)
         done = terminated or truncated
-        return numpy.array([[observation]]), reward, done
+        observation = numpy.reshape(observation, (1, 15, 21))
+
+        for i in info["result_of_action"]:
+            self.action_history.append(i)
+
+        new_reward = reward
+
+        ##############################################################################
+        ################ MODIFY THE REWARD IF STRATEGIES ARE FOLLOWED ################
+
+        if len(self.strategies) > 0:
+
+            # start to decay the reward shaping after some threshold number of steps
+            if self.decay_n is not None and self.step_count > self.decay_n:
+                self.decay = True
+            test = False
+            # if the strategy sequence is part of the current trajectory
+            for strategy in self.strategies:
+                # compute how much of the strategy is being followed
+                x, y = is_subsequence(
+                    strategy['strategy'], self.action_history)
+                # If the agent's trajectory indicates that one (or more) strategies have been partially followed
+                if x:
+                    # if not test:
+                    # ray.util.pdb.set_trace()
+                    # print(
+                    #     f"Reward shaping using STRATEGY TRANSFER {strategy}")
+                    # If the option to start decaying the reward shaping has been set and decay_n timesteps has elapsed
+                    # or if the option to stop reward shaping has not been set, apply an additional reward
+                    if self.decay:
+                        if self.decay_param != 0:
+                            # Determine the value of the additional reward based on the specified decay rate
+                            new_reward += (y*reward*self.decay_param)
+                    else:
+                        # additional reward is equal to a percentage of the reward for the current action
+                        new_reward += (y*reward)
+
+            test = True
+
+            if self.decay:
+                self.decay_param *= self.decay_param
+
+        ##############################################################################
+        ##############################################################################
+
+        return observation, new_reward, reward, done
 
     def legal_actions(self):
         """
@@ -164,7 +244,7 @@ class Game(AbstractGame):
         Returns:
             An array of integers, subset of the action space.
         """
-        return list(range(2))
+        return list(range(4))
 
     def reset(self):
         """
@@ -173,7 +253,10 @@ class Game(AbstractGame):
         Returns:
             Initial observation of the game.
         """
-        return numpy.array([[self.env.reset()]])
+        observation, info = self.env.reset(seed=self.seed, options={})
+        observation = numpy.reshape(observation, (1, 15, 21))
+        self.action_history = []
+        return observation
 
     def close(self):
         """
@@ -199,7 +282,9 @@ class Game(AbstractGame):
             String representing the action.
         """
         actions = {
-            0: "Push cart to the left",
-            1: "Push cart to the right",
+            0: "Move left",
+            1: "Move down",
+            2: "Move right",
+            3: "Move up"
         }
         return f"{action_number}. {actions[action_number]}"

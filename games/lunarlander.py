@@ -1,7 +1,12 @@
+from gymnasium.utils import seeding, EzPickle
+from gymnasium import spaces
+import gymnasium as gym
+import numpy as np
+import math
 import datetime
 import pathlib
 
-import gym
+import gymnasium as gym
 import numpy
 import torch
 
@@ -51,7 +56,7 @@ class MuZeroConfig:
         ### Network
         self.network = "fullyconnected"  # "resnet" / "fullyconnected"
         self.support_size = 10  # Value and reward are scaled (with almost sqrt) and encoded on a vector with a range of -support_size to support_size. Choose it so that support_size <= sqrt(max(abs(discounted reward)))
-        
+
         # Residual Network
         self.downsample = False  # Downsample observations before representation network, False / "CNN" (lighter) / "resnet" (See paper appendix Network Architecture)
         self.blocks = 2  # Number of blocks in the ResNet
@@ -70,7 +75,7 @@ class MuZeroConfig:
         self.fc_reward_layers = [64]  # Define the hidden layers in the reward network
         self.fc_value_layers = [64]  # Define the hidden layers in the value network
         self.fc_policy_layers = [64]  # Define the hidden layers in the policy network
-        
+
 
 
         ### Training
@@ -133,7 +138,7 @@ class Game(AbstractGame):
         self.env = DeterministicLunarLander()
         # self.env = gym.make("LunarLander-v2")
         if seed is not None:
-            self.env.seed(seed)
+            self.env.reset(seed=seed, options={})
 
     def step(self, action):
         """
@@ -145,7 +150,9 @@ class Game(AbstractGame):
         Returns:
             The new observation, the reward and a boolean if the game has ended.
         """
-        observation, reward, done, _ = self.env.step(action)
+        observation, reward, terminated, truncated, info = self.env.step(
+            action)
+        done = terminated or truncated
         return numpy.array([[observation]]), reward / 3, done
 
     def legal_actions(self):
@@ -224,9 +231,6 @@ Created by Oleg Klimov. Licensed on the same terms as the rest of OpenAI Gym.
 """
 
 
-import math
-import numpy as np
-
 try:
     import Box2D
     from Box2D.b2 import (
@@ -242,9 +246,6 @@ except ModuleNotFoundError:
         'swig librairy and box2d-py are required to run lunarlander.\n\nPlease install swig with "sudo apt install swig" on Ubuntu or "brew install swig" on mac.\nThen run "pip install box2d-py".\nFor more detailed instructions: https://github.com/openai/gym'
     )
 
-import gym
-from gym import spaces
-from gym.utils import seeding, EzPickle
 
 FPS = 50
 SCALE = 30.0  # affects how fast-paced the game is, forces should be adjusted as well
@@ -254,7 +255,8 @@ SIDE_ENGINE_POWER = 0.6
 
 INITIAL_RANDOM = 1000.0  # Set 1500 to make game harder
 
-LANDER_POLY = [(-14, +17), (-17, 0), (-17, -10), (+17, -10), (+17, 0), (+14, +17)]
+LANDER_POLY = [(-14, +17), (-17, 0), (-17, -10),
+               (+17, -10), (+17, 0), (+14, +17)]
 LEG_AWAY = 20
 LEG_DOWN = 18
 LEG_W, LEG_H = 2, 8
@@ -289,7 +291,8 @@ class ContactDetector(contactListener):
 
 
 class DeterministicLunarLander(gym.Env, EzPickle):
-    metadata = {"render.modes": ["human", "rgb_array"], "video.frames_per_second": FPS}
+    metadata = {"render.modes": [
+        "human", "rgb_array"], "video.frames_per_second": FPS}
 
     continuous = False
 
@@ -371,7 +374,8 @@ class DeterministicLunarLander(gym.Env, EzPickle):
         for i in range(CHUNKS - 1):
             p1 = (chunk_x[i], smooth_y[i])
             p2 = (chunk_x[i + 1], smooth_y[i + 1])
-            self.moon.CreateEdgeFixture(vertices=[p1, p2], density=0, friction=0.1)
+            self.moon.CreateEdgeFixture(
+                vertices=[p1, p2], density=0, friction=0.1)
             self.sky_polys.append([p1, p2, (p2[0], H), (p1[0], H)])
 
         self.moon.color1 = (0.0, 0.0, 0.0)
@@ -405,7 +409,8 @@ class DeterministicLunarLander(gym.Env, EzPickle):
         self.legs = []
         for i in [-1, +1]:
             leg = self.world.CreateDynamicBody(
-                position=(VIEWPORT_W / SCALE / 2 - i * LEG_AWAY / SCALE, initial_y),
+                position=(VIEWPORT_W / SCALE / 2 - i *
+                          LEG_AWAY / SCALE, initial_y),
                 angle=(i * 0.05),
                 fixtures=fixtureDef(
                     shape=polygonShape(box=(LEG_W / SCALE, LEG_H / SCALE)),
@@ -485,15 +490,19 @@ class DeterministicLunarLander(gym.Env, EzPickle):
         ):
             # Main engine
             if self.continuous:
-                m_power = (np.clip(action[0], 0.0, 1.0) + 1.0) * 0.5  # 0.5..1.0
+                # 0.5..1.0
+                m_power = (np.clip(action[0], 0.0, 1.0) + 1.0) * 0.5
                 assert m_power >= 0.5 and m_power <= 1.0
             else:
                 m_power = 1.0
             ox = (
-                tip[0] * (4 / SCALE + 2 * dispersion[0]) + side[0] * dispersion[1]
+                tip[0] * (4 / SCALE + 2 * dispersion[0]) +
+                side[0] * dispersion[1]
             )  # 4 is move a bit downwards, +-2 for randomness
-            oy = -tip[1] * (4 / SCALE + 2 * dispersion[0]) - side[1] * dispersion[1]
-            impulse_pos = (self.lander.position[0] + ox, self.lander.position[1] + oy)
+            oy = -tip[1] * (4 / SCALE + 2 * dispersion[0]) - \
+                side[1] * dispersion[1]
+            impulse_pos = (
+                self.lander.position[0] + ox, self.lander.position[1] + oy)
             p = self._create_particle(
                 3.5,  # 3.5 is here to make particle speed adequate
                 impulse_pos[0],
@@ -501,12 +510,14 @@ class DeterministicLunarLander(gym.Env, EzPickle):
                 m_power,
             )  # particles are just a decoration
             p.ApplyLinearImpulse(
-                (ox * MAIN_ENGINE_POWER * m_power, oy * MAIN_ENGINE_POWER * m_power),
+                (ox * MAIN_ENGINE_POWER * m_power,
+                 oy * MAIN_ENGINE_POWER * m_power),
                 impulse_pos,
                 True,
             )
             self.lander.ApplyLinearImpulse(
-                (-ox * MAIN_ENGINE_POWER * m_power, -oy * MAIN_ENGINE_POWER * m_power),
+                (-ox * MAIN_ENGINE_POWER * m_power, -
+                 oy * MAIN_ENGINE_POWER * m_power),
                 impulse_pos,
                 True,
             )
@@ -531,16 +542,20 @@ class DeterministicLunarLander(gym.Env, EzPickle):
             )
             impulse_pos = (
                 self.lander.position[0] + ox - tip[0] * 17 / SCALE,
-                self.lander.position[1] + oy + tip[1] * SIDE_ENGINE_HEIGHT / SCALE,
+                self.lander.position[1] + oy +
+                tip[1] * SIDE_ENGINE_HEIGHT / SCALE,
             )
-            p = self._create_particle(0.7, impulse_pos[0], impulse_pos[1], s_power)
+            p = self._create_particle(
+                0.7, impulse_pos[0], impulse_pos[1], s_power)
             p.ApplyLinearImpulse(
-                (ox * SIDE_ENGINE_POWER * s_power, oy * SIDE_ENGINE_POWER * s_power),
+                (ox * SIDE_ENGINE_POWER * s_power,
+                 oy * SIDE_ENGINE_POWER * s_power),
                 impulse_pos,
                 True,
             )
             self.lander.ApplyLinearImpulse(
-                (-ox * SIDE_ENGINE_POWER * s_power, -oy * SIDE_ENGINE_POWER * s_power),
+                (-ox * SIDE_ENGINE_POWER * s_power, -
+                 oy * SIDE_ENGINE_POWER * s_power),
                 impulse_pos,
                 True,
             )
@@ -551,7 +566,8 @@ class DeterministicLunarLander(gym.Env, EzPickle):
         vel = self.lander.linearVelocity
         state = [
             (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
-            (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),
+            (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) /
+            (VIEWPORT_H / SCALE / 2),
             vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
             vel.y * (VIEWPORT_H / SCALE / 2) / FPS,
             self.lander.angle,
@@ -593,7 +609,8 @@ class DeterministicLunarLander(gym.Env, EzPickle):
 
         if self.viewer is None:
             self.viewer = rendering.Viewer(VIEWPORT_W, VIEWPORT_H)
-            self.viewer.set_bounds(0, VIEWPORT_W / SCALE, 0, VIEWPORT_H / SCALE)
+            self.viewer.set_bounds(0, VIEWPORT_W / SCALE,
+                                   0, VIEWPORT_H / SCALE)
 
         for obj in self.particles:
             obj.ttl -= 0.15
@@ -628,12 +645,14 @@ class DeterministicLunarLander(gym.Env, EzPickle):
                     path = [trans * v for v in f.shape.vertices]
                     self.viewer.draw_polygon(path, color=obj.color1)
                     path.append(path[0])
-                    self.viewer.draw_polyline(path, color=obj.color2, linewidth=2)
+                    self.viewer.draw_polyline(
+                        path, color=obj.color2, linewidth=2)
 
         for x in [self.helipad_x1, self.helipad_x2]:
             flagy1 = self.helipad_y
             flagy2 = flagy1 + 50 / SCALE
-            self.viewer.draw_polyline([(x, flagy1), (x, flagy2)], color=(1, 1, 1))
+            self.viewer.draw_polyline(
+                [(x, flagy1), (x, flagy2)], color=(1, 1, 1))
             self.viewer.draw_polygon(
                 [
                     (x, flagy2),
